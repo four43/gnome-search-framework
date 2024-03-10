@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+
+Name={{ provider_name }}
+Icon={{ provider_icon }}
+Comment={{ provider_description }}
+
+DBusActivatable=true
+Terminal=false
+
+OnlyShowIn=GNOME;
+Exec=/usr/libexec/{{ provider_id | camel_to_kebab }}-search-provider/run
