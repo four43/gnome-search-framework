@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
+import os
 from gi.repository import GLib
 from gi.repository import Gio
 
 import pydbus
 import pydbus.generic
+from sphinx import project
 from xdg_base_dirs import xdg_config_home, xdg_config_dirs
 
 import argparse
@@ -71,11 +73,12 @@ class SearchProvider2():
         </interface>
     </node>"""
 
-    def __init__(self, main_loop):
+    def __init__(self, main_loop, project_dirs: list[Path]):
         self.main_loop = main_loop
 
-        self.code_icon = Gio.ThemedIcon.new('application-xml')
-
+        # self.code_icon = Gio.ThemedIcon.new('application-xml')
+        self.code_icon = Gio.ThemedIcon.new('code')
+        self.project_dirs = project_dirs
         self.terms = []
 
     def GetInitialResultSet(self, terms):
@@ -83,17 +86,20 @@ class SearchProvider2():
         self.main_loop.reset_active_timeout()
         self.terms = terms
 
-        results = ["Project A", "Project B", "Project C"]
-
-        return results
+        # Find git projects
+        git_projects = []
+        for project_dir in self.project_dirs:
+            for root, dirs, files in os.walk(project_dir):
+                if '.git' in dirs:
+                    git_projects.append(root)
+        return git_projects
 
     def GetSubsearchResultSet(self, previous_results, terms):
         log.info("Subsearch for %s", str(terms))
         self.main_loop.reset_active_timeout()
         self.terms = terms
 
-        # Lazy option. Search again on each keypress. Joplin is backed by
-        # a local SQLite database so this should be fast enough.
+        # TODO filter better
         return self.GetInitialResultSet(terms)
 
 
@@ -114,15 +120,12 @@ class SearchProvider2():
     def ActivateResult(self, result, terms, timestamp):
         log.info("Activate %s", result)
         self.main_loop.reset_active_timeout()
-        # FIXME: We can only activate the app, not the specific result.
-        # See https://discourse.joplinapp.org/t/open-a-note-in-desktop-app-using-commandline/13433/6
+        # TODO: Launch using the app associated with the project
         app_info().launch([], None)
 
     def LaunchSearch(self, terms, timestamp):
         log.info("Launch search %s", terms)
         self.main_loop.reset_active_timeout()
-        # FIXME: We can only activate the app, not the specific result.
-        # See https://discourse.joplinapp.org/t/open-a-note-in-desktop-app-using-commandline/13433/6
         app_info().launch([], None)
 
 
@@ -177,13 +180,13 @@ def main():
     if args.debug:
         logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
 
-    # api_token = load_config()
+    api_token = load_config()
 
     loop = MainLoop()
 
     bus = pydbus.SessionBus()
     dbusname = 'com.four43.Projects.SearchProvider'
-    bus.publish(dbusname, SearchProvider2(loop))
+    bus.publish(dbusname, SearchProvider2(loop, project_dirs=[Path.home() / "projects"]))
 
     log.info("Waiting for requests on D-Bus name %s", dbusname)
     loop.set_inactive_timeout(int(args.timeout))

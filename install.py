@@ -6,6 +6,7 @@ from pathlib import Path
 from random import choices
 import shutil
 import subprocess
+import toml
 
 import click
 from jinja2 import Environment, FileSystemLoader
@@ -57,19 +58,24 @@ def main(
     project_path = Path(project_path)
     logging.basicConfig(level=logging.DEBUG if debug else logging.INFO)
 
-    # @TODO - dynamically load the vars from the project path
-    vars = {
-        "provider_id": "com.four43.Projects",
-        "provider_name": "Four43's Project Search",
-        "provider_description": "Search for projects in your project directory and open with your editor of choice",
-        "provider_icon": "application-xml",
-    }
+    # Load the meta.toml from the project_path
+    meta_path = project_path / "meta.toml"
+    try:
+        with open(meta_path, "r") as f:
+            meta_data = toml.load(f)
+    except FileNotFoundError:
+        logger.error(f"meta.toml not found in {project_path}")
+        return
+
+    # Extract the required variables from meta_data
+    print(meta_data)
+    plugin_meta = {"provider": {**meta_data}}
 
     # fmt: off
     template_output_map = {
-        "dbus.service.jinja2":        Path('/usr') / "share" / "dbus-1"       / "services" / f"{vars['provider_id']}.SearchProvider.service",      # ex: org.gnome.Calculator.SearchProvider.service
-        "search-provider.ini.jinja2": Path('/usr') / "share" / "gnome-shell"  / "search-providers" / f"{vars['provider_id']}.search-provider.ini", # ex: org.gnome.Calendar.search-provider.ini
-        "search.desktop.jinja2":      Path('/usr') / "share" / "applications" / f"{vars['provider_id']}.SearchProvider.desktop",                   # ex: org.gnome.Calculator.desktop
+        "dbus.service.jinja2":        Path('/usr') / "share" / "dbus-1"       / "services" / f"{plugin_meta['provider']['id']}.SearchProvider.service",      # ex: org.gnome.Calculator.SearchProvider.service
+        "search-provider.ini.jinja2": Path('/usr') / "share" / "gnome-shell"  / "search-providers" / f"{plugin_meta['provider']['id']}.search-provider.ini", # ex: org.gnome.Calendar.search-provider.ini
+        "search.desktop.jinja2":      Path('/usr') / "share" / "applications" / f"{plugin_meta['provider']['id']}.SearchProvider.desktop",                   # ex: org.gnome.Calculator.desktop
     }
     # fmt: on
 
@@ -78,7 +84,7 @@ def main(
         for template_file, output_path in template_output_map.items():
             logger.info(f"Writing {output_path}...")
             template = env.get_template(template_file)
-            rendered_template = template.render(**vars)
+            rendered_template = template.render(**plugin_meta)
             with open(output_path, "w") as f:
                 f.write(rendered_template)
 
@@ -97,7 +103,7 @@ def main(
         )
 
         # fmt: off
-        output_project_path = Path('/usr') / "libexec" / f"{camel_to_kebab(vars['provider_id'])}-search-provider"
+        output_project_path = Path('/usr') / "libexec" / f"{camel_to_kebab(plugin_meta['provider']['id'])}-search-provider"
         # fmt: on
         output_project_path.mkdir(parents=True, exist_ok=True)
         logger.info(f"Copying {project_path} to {output_project_path}...")

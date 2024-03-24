@@ -2,12 +2,12 @@
 Version=1.0
 Type=Application
 
-Name={{ provider_name }}
-Icon={{ provider_icon }}
-Comment={{ provider_description }}
+Name={{ provider.name }}
+Icon={{ provider.icon }}
+Comment={{ provider.description }}
 
 DBusActivatable=true
 Terminal=false
 
 OnlyShowIn=GNOME;
-Exec=/usr/libexec/{{ provider_id | camel_to_kebab }}-search-provider/run
+Exec=/usr/libexec/{{ provider.id | camel_to_kebab }}-search-provider/run

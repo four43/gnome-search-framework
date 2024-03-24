@@ -1,29 +1,19 @@
-pip-install:
+ROOT_DIR := $(dir $(realpath $(lastword $(MAKEFILE_LIST))))
+
+ifndef PROJECT_DIR
+$(error PROJECT_DIR is not set, please set it to the path of the search provider you would like to install. For example: make install PROJECT_DIR=./com.example.MySearchProvider)
+endif
+
+pip-install-base:
 	/bin/bash -c "python -m venv --system-site-packages .venv && source ./.venv/bin/activate && python -m pip install -r ./requirements.txt"
 
-install: ./*
-	rm -rf /usr/local/bin/gnome-search-projects || true
-	mkdir -p /usr/local/bin/gnome-search-projects
-	python -m venv --system-site-packages /usr/local/bin/gnome-search-projects/.venv
-	/bin/bash -c "source /usr/local/bin/gnome-search-projects/.venv/bin/activate && pip install -r requirements.txt"
-	install -Dm 0644 gnome_search_projects/__main__.py /usr/local/bin/gnome-search-projects/gnome_search_projects/__main__.py
+install: ./* pip-install-base
+	/bin/bash -c "source $(ROOT_DIR).venv/bin/activate && python $(ROOT_DIR)/install.py install $(PROJECT_DIR)"
 
-	install -Dm 0644 files/com.four43.Projects.SearchProvider.systemd.service /usr/lib/systemd/user/com.four43.Projects.SearchProvider.service
-	install -Dm 0644  files/com.four43.Projects.SearchProvider.desktop /usr/share/applications/com.four43.Projects.SearchProvider.desktop
-	install -Dm 0644 files/com.four43.Projects.SearchProvider.ini /usr/share/gnome-shell/search-providers/com.four43.Projects.SearchProvider.ini
-	install -Dm 0644 files/com.four43.Projects.SearchProvider.dbus.service /usr/share/dbus-1/services/services/com.four43.Projects.SearchProvider.service
+uninstall: pip-install-base
+	/bin/bash -c "source $(ROOT_DIR).venv/bin/activate && python $(ROOT_DIR)/install.py uninstall $(PROJECT_DIR)"
 
-uninstall:
-	rm -f /usr/lib/systemd/user/com.four43.Projects.SearchProvider.service
-	rm -f /usr/share/applications/com.four43.Projects.SearchProvider.desktop
-	rm -f /usr/share/gnome-shell/search-providers/com.four43.Projects.SearchProvider.ini
-	rm -f /usr/share/dbus-1/services/services/com.four43.Projects.SearchProvider.service
-	rm -rf ~/.local/bin/gnome-search-projects
-
-dev: install
-	rm -rf /usr/local/bin/gnome-search-projects
-	ln -s $(shell pwd) /usr/local/bin/gnome-search-projects
-
-restart:
-	systemctl --user daemon-reload
-	systemctl --user restart com.four43.Projects.SearchProvider.service
+logs:
+	PROJECT_ID=$(shell cat $(PROJECT_DIR)/meta.toml | grep 'id' | awk '{print $$3}' | tr -d '"')
+	(journalctl -f /usr/bin/dbus-daemon | GREP_COLORS='ms=01;33' grep --color=always -e '^.*$(PROJECT_ID).SearchProvider.*$$') &
+	(tail -f /var/log/syslog | GREP_COLORS='ms=01;34' grep --color=always -e '^.*$(PROJECT_ID).SearchProvider.*$$')

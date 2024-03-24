@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=com.four43.Projects.SearchProvider
-Exec=/usr/local/bin/gnome-search-providers/com.four43.Projects.Search
