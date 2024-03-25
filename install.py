@@ -38,10 +38,12 @@ env.filters["dot_to_fw_slash"] = dot_to_fw_slash
     default="install",
     required=True,
 )
+@click.argument("framework-path", type=click.Path(exists=True), required=True)
 @click.argument("project-path", type=click.Path(exists=True), required=True)
 @click.option("--debug", is_flag=True, help="Enable detailed logging to stderr")
 def main(
     action: str,
+    framework_path: Path,
     project_path: Path,
     debug: bool,
 ):
@@ -93,6 +95,13 @@ def main(
         import venv
 
         venv.create(project_path / ".venv", system_site_packages=True, with_pip=True)
+        subprocess.run(
+            [
+                project_path / ".venv/bin/pip",
+                "install",
+                framework_path
+            ]
+        )
         subprocess.run(
             [
                 project_path / ".venv/bin/pip",

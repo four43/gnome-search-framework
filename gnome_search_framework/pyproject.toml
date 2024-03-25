@@ -1,0 +1,13 @@
+[project]
+name = "gnome_search_framework"
+description = "A framework for extending GNOME search"
+version = "0.1.0"
+
+authors = [{ name = "Seth Miller", email = "seth@four43.com" }]
+
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+dependencies = []

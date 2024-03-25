@@ -1,39 +1,24 @@
-#!/usr/bin/env python3
-import os
-from gi.repository import GLib
-from gi.repository import Gio
-
-import pydbus
-import pydbus.generic
-from sphinx import project
-from xdg_base_dirs import xdg_config_home, xdg_config_dirs
-
-import argparse
-import configparser
 import logging
+import os
 from pathlib import Path
-import sys
+from typing import Any, List, Optional
 
-log = logging.getLogger()
+import toml
+from gi.repository import Gio, GLib
+from xdg_base_dirs import xdg_config_dirs, xdg_config_home
 
-CONFIG_NAME = 'com.four43.Projects.SearchProvider.conf'
+from gnome_search_framework import SearchProvider
+
+DIR = Path(__file__).parent
+config = toml.load(DIR.parent / "meta.toml")
+
+log = logging.getLogger(__name__)
 
 APP_DESKTOP_NAMES = [
   'code.desktop',
 ]
 
-
-def argument_parser():
-    parser = argparse.ArgumentParser(
-        description="GNOME Search Provider for Joplin notes")
-    parser.add_argument('--debug', dest='debug', action='store_true',
-                        help="Enable detailed logging to stderr")
-    parser.add_argument('--timeout', metavar='SECONDS', default=10,
-                        help="Shut down process after SECONDS inactivity. Default: 10)")
-    return parser
-
-
-def app_info():
+def app_info() -> Gio.DesktopAppInfo:
     for desktop_name in APP_DESKTOP_NAMES:
         try:
             info = Gio.DesktopAppInfo.new(desktop_name)
@@ -43,159 +28,129 @@ def app_info():
             # This happens when the constructor returns NULL because the file
             # doesn't exist.
             log.debug("Failed to load app info from %s", desktop_name)
+    raise FileNotFoundError(f"No app info found for any listed apps: {APP_DESKTOP_NAMES}")
+
+class ProjectSearch(SearchProvider):
+
+    icon = Gio.ThemedIcon.new("code")
+
+    def __init__(self) -> None:
+        super().__init__(provider_id=config["id"])
+        self.user_config = self._load_user_config(config["id"])
+        self.project_paths = [Path(x) for x in self.user_config["project_paths"]]
+        self.keep_parent = self.user_config.get("keep_parent", True)
+        log.info(f"Project paths: {self.project_paths}")
+
+    def _load_user_config(self, provider_id: str) -> dict[str, Any] | dict[str, list[Any]]:
+        default_config = {"project_paths": []}
+        log.debug(f"Loading user config from: {[xdg_config_home()] + xdg_config_dirs()}")
+
+        def get_config_path(base):
+            return (
+                Path(base)
+                / "gnome-shell"
+                / "search-providers"
+                / f"{provider_id}.SearchProvider.toml"
+            )
+
+        for config_base in [xdg_config_home()] + xdg_config_dirs():
+            config_path = get_config_path(config_base)
+            log.info("Loading config from %s", config_path)
+            try:
+                return toml.load(config_path)
+            except FileNotFoundError as e:
+                log.info(
+                    f"Error loading config from {config_path}, trying other locations..."
+                )
+            except toml.TomlDecodeError as e:
+                log.exception(
+                    f"Error loading config from {config_path}, malformed toml file.", e
+                )
+                raise e
+
+        config_path = get_config_path(xdg_config_home())
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        log.warning(f"Nmsg=o config found. Installing config template to {config_path}")
+        with open(config_path, "w") as f:
+            f.write(toml.dumps(default_config))
+        return default_config
 
 
-class SearchProvider2():
-    """<node>
-        <interface name="org.gnome.Shell.SearchProvider2">
-            <method name="GetInitialResultSet">
-                <arg type="as" name="terms" direction="in" />
-                <arg type="as" name="results" direction="out" />
-            </method>
-            <method name="GetSubsearchResultSet">
-                <arg type="as" name="previous_results" direction="in" />
-                <arg type="as" name="terms" direction="in" />
-                <arg type="as" name="results" direction="out" />
-            </method>
-            <method name="GetResultMetas">
-                <arg type="as" name="identifiers" direction="in" />
-                <arg type="aa{sv}" name="metas" direction="out" />
-            </method>
-            <method name="ActivateResult">
-                <arg type="s" name="identifier" direction="in" />
-                <arg type="as" name="terms" direction="in" />
-                <arg type="u" name="timestamp" direction="in" />
-            </method>
-            <method name="LaunchSearch">
-                <arg type="as" name="terms" direction="in" />
-                <arg type="u" name="timestamp" direction="in" />
-            </method>
-        </interface>
-    </node>"""
+    def _path_to_searchable(self, project_path: Path) -> str:
+        for project_dir in self.project_paths:
+            if str(project_path).startswith(str(project_dir)):
+                if self.keep_parent:
+                    return str(project_path.relative_to(project_dir.parent))
+                else:
+                    return str(project_path.relative_to(project_dir))
+        raise RuntimeError("Cannot find path in project paths")
 
-    def __init__(self, main_loop, project_dirs: list[Path]):
-        self.main_loop = main_loop
+    @staticmethod
+    def _filter_project(project_dir: str, terms: list[str]) -> bool:
+        for term in terms:
+            if term in project_dir:
+                return True
+        return False
 
-        # self.code_icon = Gio.ThemedIcon.new('application-xml')
-        self.code_icon = Gio.ThemedIcon.new('code')
-        self.project_dirs = project_dirs
-        self.terms = []
+    def search(self, terms: List[str], previous_results: Optional[list[str]] = None) -> list[str]:
+        project_dirs = []
+        if previous_results is None:
+            # Find projects via file search
+            for project_dir in self.project_paths:
+                log.debug("Searching for projects in %s", project_dir)
+                for dir_entry in project_dir.iterdir():
+                    if dir_entry.is_dir():
+                        search_str = self._path_to_searchable(dir_entry)
+                        log.debug("Filtering for project %s against %s", search_str, terms)
+                        if self._filter_project(project_dir=search_str, terms=terms):
+                            project_dirs.append(str(dir_entry))
+        else:
+            for result in previous_results:
+                search_str = self._path_to_searchable(Path(result))
+                if self._filter_project(project_dir=search_str, terms=terms):
+                    project_dirs.append(result)
+        return project_dirs
 
-    def GetInitialResultSet(self, terms):
-        log.info("Initial search for %s", str(terms))
-        self.main_loop.reset_active_timeout()
-        self.terms = terms
+    def get_meta(self, result_id: str) -> dict:
+        search_str = self._path_to_searchable(Path(result_id))
+        return {
+            "id": GLib.Variant("s", result_id),
+            "name": GLib.Variant("s", search_str),
+            "gicon": GLib.Variant("s", ProjectSearch.icon.to_string()),
+            "description": GLib.Variant("s", f"Description for {result_id}"),
+        }
 
-        # Find git projects
-        git_projects = []
-        for project_dir in self.project_dirs:
-            for root, dirs, files in os.walk(project_dir):
-                if '.git' in dirs:
-                    git_projects.append(root)
-        return git_projects
+    def select(self, result_id: str) -> None:
+        # Find result_id's full path:
+        project_path = Path(result_id)
+        if not project_path.exists():
+            raise RuntimeError(f"Path {result_id} does not exist")
 
-    def GetSubsearchResultSet(self, previous_results, terms):
-        log.info("Subsearch for %s", str(terms))
-        self.main_loop.reset_active_timeout()
-        self.terms = terms
+        launch_context = Gio.AppLaunchContext()
+        launch_context.setenv("GIO_LAUNCH_FLAGS", "G_APP_INFO_CREATE_NEEDS_TERMINAL")
 
-        # TODO filter better
-        return self.GetInitialResultSet(terms)
+        # TODO auto launch into dev container
+        # devcontainer_path = project_path / ".devcontainer" / "devcontainer.json"
+        # if devcontainer_path.exists():
+        #     import urllib.parse
+        #     encoded_project_path = urllib.parse.quote(str(devcontainer_path), safe='')
+        #     launch_args = ["--folder-uri", f"vscode-remote://dev-container+{encoded_project_path}"]
+        # else:
+        #     pass
 
+        launch_args = [project_path.as_uri()]
 
-    def GetResultMetas(self, results):
-        log.info("Get result metas for %s", results)
-        self.main_loop.reset_active_timeout()
-
-        metas = []
-        for result_id in results:
-            metas.append({
-                'id': GLib.Variant('s', result_id),
-                'name': GLib.Variant('s', result_id),
-                'gicon': GLib.Variant('s', self.code_icon.to_string()),
-                'description': GLib.Variant('s', f"Description for {result_id}"),
-            })
-        return metas
-
-    def ActivateResult(self, result, terms, timestamp):
-        log.info("Activate %s", result)
-        self.main_loop.reset_active_timeout()
-        # TODO: Launch using the app associated with the project
-        app_info().launch([], None)
-
-    def LaunchSearch(self, terms, timestamp):
-        log.info("Launch search %s", terms)
-        self.main_loop.reset_active_timeout()
-        app_info().launch([], None)
-
-
-class MainLoop():
-    """Wrapper around GLib main loop which adds an inactivity timeout."""
-    def __init__(self):
-        self.loop = GLib.MainLoop()
-
-        self.timeout = None
-        self.timeout_id = None
-
-    def set_inactive_timeout(self, seconds=None):
-        self.timeout = seconds
-        self.reset_active_timeout()
-
-    def reset_active_timeout(self):
-        if self.timeout_id:
-            GLib.source_remove(self.timeout_id)
-            self.timeout_id = None
-        if self.timeout:
-            GLib.timeout_add_seconds(self.timeout, lambda: self._inactive_timeout())
-
-    def _inactive_timeout(self):
-        log.info("Exiting due to %i seconds inactivity timer", self.timeout)
-        self.loop.quit()
-        return GLib.SOURCE_REMOVE
-
-    def run(self):
-        self.loop.run()
-
-
-def load_config():
-    parser = configparser.ConfigParser()
-    for config_base in [xdg_config_home()] + xdg_config_dirs():
-        config_path = Path(config_base / "gnome-shell", "search-providers", CONFIG_NAME)
-        log.info("Loading config from %s", config_path)
         try:
-            parser.read(config_path)
-        except Exception as e:
-            log.exception(e)
-    try:
-        api_token = parser['authentication']['api_token']
-    except KeyError:
-        raise RuntimeError("Did not find 'api_token' in config file. "
-                           f"Check ~/.config/{CONFIG_NAME}")
-    return api_token
+            log.debug(f"Launching {result_id}: {launch_args}")
+            app_info().launch_uris_as_manager(launch_args, launch_context, GLib.SpawnFlags.DO_NOT_REAP_CHILD, None)
+        except GLib.Error as e:
+            log.error(f"Failed to launch {result_id}: {e.message}")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+
+    # ps = ProjectSearch()
+    # results = ps.search(terms=["gnome"])
 
 
-def main():
-    args = argument_parser().parse_args()
-
-    if args.debug:
-        logging.basicConfig(stream=sys.stderr, level=logging.DEBUG)
-
-    api_token = load_config()
-
-    loop = MainLoop()
-
-    bus = pydbus.SessionBus()
-    dbusname = 'com.four43.Projects.SearchProvider'
-    bus.publish(dbusname, SearchProvider2(loop, project_dirs=[Path.home() / "projects"]))
-
-    log.info("Waiting for requests on D-Bus name %s", dbusname)
-    loop.set_inactive_timeout(int(args.timeout))
-    loop.run()
-
-
-if __name__ == '__main__':
-    try:
-        main()
-    except RuntimeError as e:
-        sys.stderr.write("ERROR: {}\n".format(e))
-        sys.exit(1)
+    ProjectSearch().start()

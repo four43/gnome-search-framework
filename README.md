@@ -1,6 +1,6 @@
 # Gnome Search Projects Provider
 
-Uses Dbus to create a provider for Gnome's search. Searches all of my software projects and opens them in my editor when selected.
+A framework to quickly extend Gnome search for custom providers.
 
 Primary Docs: https://developer.gnome.org/documentation/tutorials/search-provider.html
 
@@ -10,3 +10,11 @@ With help from:
 * [cnjhb/gnome-command-search-provider](https://github.com/cnjhb/gnome-command-search-provider), thanks for the example!
 
 Full text indexing: <https://github.com/Sygil-Dev/whoosh-reloaded>
+
+## Features
+
+ - Create a search provider by extending a simple Python class
+    - Other languages easily supported too by using a subprocess and "structured" output
+ - Easy install/uninstall using `make install|uninstall PROJECT_DIR=[PROJECT_DIR]`
+ - View logs for a custom search provider using `make logs PROJECT_DIR=[PROJECT_DIR]`
+ -
