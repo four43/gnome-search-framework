@@ -14,22 +14,6 @@ config = toml.load(DIR.parent / "meta.toml")
 
 log = logging.getLogger(__name__)
 
-APP_DESKTOP_NAMES = [
-  'code.desktop',
-]
-
-def app_info() -> Gio.DesktopAppInfo:
-    for desktop_name in APP_DESKTOP_NAMES:
-        try:
-            info = Gio.DesktopAppInfo.new(desktop_name)
-            logging.debug("Loaded app info from %s", desktop_name)
-            return info
-        except TypeError as e:
-            # This happens when the constructor returns NULL because the file
-            # doesn't exist.
-            log.debug("Failed to load app info from %s", desktop_name)
-    raise FileNotFoundError(f"No app info found for any listed apps: {APP_DESKTOP_NAMES}")
-
 class ProjectSearch(SearchProvider):
 
     icon = Gio.ThemedIcon.new("code")
@@ -39,10 +23,18 @@ class ProjectSearch(SearchProvider):
         self.user_config = self._load_user_config(config["id"])
         self.project_paths = [Path(x) for x in self.user_config["project_paths"]]
         self.keep_parent = self.user_config.get("keep_parent", True)
+        self.ide_desktop_files = self.user_config.get("ide_desktop_files", ["code.desktop"])
         log.info(f"Project paths: {self.project_paths}")
 
     def _load_user_config(self, provider_id: str) -> dict[str, Any] | dict[str, list[Any]]:
-        default_config = {"project_paths": []}
+        default_config = {
+            "project_paths": [
+                "/home/your-user-name/projects/namespace-a",
+                "/home/your-user-name/projects/namespace-b",
+            ],
+            "keep_parent": True,
+            "ide_desktop_files": ["code.desktop", "org.gnome.TextEditor.desktop"]
+        }
         log.debug(f"Loading user config from: {[xdg_config_home()] + xdg_config_dirs()}")
 
         def get_config_path(base):
@@ -75,7 +67,6 @@ class ProjectSearch(SearchProvider):
             f.write(toml.dumps(default_config))
         return default_config
 
-
     def _path_to_searchable(self, project_path: Path) -> str:
         for project_dir in self.project_paths:
             if str(project_path).startswith(str(project_dir)):
@@ -84,6 +75,19 @@ class ProjectSearch(SearchProvider):
                 else:
                     return str(project_path.relative_to(project_dir))
         raise RuntimeError("Cannot find path in project paths")
+
+    def _app_info(self, result_id: str) -> Gio.DesktopAppInfo:
+        # result_id is available here if you wanted to do more complex logic of choosing which app opens what
+        for desktop_name in self.ide_desktop_files:
+            try:
+                info = Gio.DesktopAppInfo.new(desktop_name)
+                logging.debug("Loaded app info from %s", desktop_name)
+                return info
+            except TypeError as e:
+                # This happens when the constructor returns NULL because the file
+                # doesn't exist.
+                log.debug("Failed to load app info from %s", desktop_name)
+        raise FileNotFoundError(f"No app info found for any listed apps: {self.ide_desktop_files}")
 
     @staticmethod
     def _filter_project(project_dir: str, terms: list[str]) -> bool:
@@ -94,7 +98,7 @@ class ProjectSearch(SearchProvider):
 
     def search(self, terms: List[str], previous_results: Optional[list[str]] = None) -> list[str]:
         project_dirs = []
-        if previous_results is None:
+        if previous_results is None or len(previous_results) == 0:
             # Find projects via file search
             for project_dir in self.project_paths:
                 log.debug("Searching for projects in %s", project_dir)
@@ -116,7 +120,7 @@ class ProjectSearch(SearchProvider):
         return {
             "id": GLib.Variant("s", result_id),
             "name": GLib.Variant("s", search_str),
-            "gicon": GLib.Variant("s", ProjectSearch.icon.to_string()),
+            "gicon": GLib.Variant("s", self._app_info(result_id).get_icon().to_string()),
             "description": GLib.Variant("s", f"Description for {result_id}"),
         }
 
@@ -142,7 +146,7 @@ class ProjectSearch(SearchProvider):
 
         try:
             log.debug(f"Launching {result_id}: {launch_args}")
-            app_info().launch_uris_as_manager(launch_args, launch_context, GLib.SpawnFlags.DO_NOT_REAP_CHILD, None)
+            self._app_info(result_id).launch_uris_as_manager(launch_args, launch_context, GLib.SpawnFlags.DO_NOT_REAP_CHILD, None)
         except GLib.Error as e:
             log.error(f"Failed to launch {result_id}: {e.message}")
 
@@ -154,3 +158,4 @@ if __name__ == "__main__":
 
 
     ProjectSearch().start()
+
