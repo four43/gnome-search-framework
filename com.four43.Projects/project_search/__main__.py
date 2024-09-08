@@ -133,7 +133,7 @@ class ProjectSearch(SearchProvider):
         launch_context = Gio.AppLaunchContext()
         launch_context.setenv("GIO_LAUNCH_FLAGS", "G_APP_INFO_CREATE_NEEDS_TERMINAL")
 
-        # TODO auto launch into dev container
+        # TODO auto launch into dev container with VSCode???
         # devcontainer_path = project_path / ".devcontainer" / "devcontainer.json"
         # if devcontainer_path.exists():
         #     import urllib.parse
